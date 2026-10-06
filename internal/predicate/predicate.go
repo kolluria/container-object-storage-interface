@@ -200,8 +200,7 @@ func BucketStatusChanged(s *runtime.Scheme) predicate.Funcs {
 
 // Internal logic for determining if a Bucket status change is relevant to the BucketClaim.
 func bucketStatusChanged(old, new *cosiapi.Bucket) bool {
-	return old.Status.BucketID != new.Status.BucketID ||
-		!ptr.Equal(old.Status.ReadyToUse, new.Status.ReadyToUse) ||
+	return !ptr.Equal(old.Status.ReadyToUse, new.Status.ReadyToUse) ||
 		!slices.Equal(old.Status.Protocols, new.Status.Protocols)
 }
 

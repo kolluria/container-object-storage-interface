@@ -137,7 +137,8 @@ func Test_bucketStatusChanged(t *testing.T) {
 			},
 		}
 
-		assert.True(t, bucketStatusChanged(old, new))
+		// a change in bucket ID is not a valid predicate for a bucket claim to be reconciled.
+		assert.False(t, bucketStatusChanged(old, new))
 	})
 
 	t.Run("readyToUse becomes true, bucketID unchanged", func(t *testing.T) {
