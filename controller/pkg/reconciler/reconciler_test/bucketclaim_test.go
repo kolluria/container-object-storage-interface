@@ -474,10 +474,10 @@ func TestBucketClaimReconcile(t *testing.T) {
 					})
 				})
 
-				t.Run("still waiting after Bucket ID generated but not provisioned", func(t *testing.T) {
+				t.Run("not ready after Bucket ID generated but not provisioned", func(t *testing.T) {
 					// The sidecar's DriverGenerateBucketId call persists status.bucketID before
-					// any backend bucket exists. A set bucketID alone must not advance the claim
-					// to ready.
+					// any backend bucket exists. A set bucketID alone must not mark the claim
+					// ready, since readyToUse is mirrored from the Bucket and is still false.
 
 					// Set up: run the real sidecar Bucket reconciler against a driver that
 					// implements DriverGenerateBucketId but fails DriverCreateBucket, so the
@@ -506,15 +506,13 @@ func TestBucketClaimReconcile(t *testing.T) {
 					// Act: reconcile the BucketClaim against that unprovisioned Bucket.
 					res, err := r.Reconcile(ctx, ctrl.Request{NamespacedName: cositest.NsName(&baseDynamicClaim)})
 
-					// Expect: a retryable "still waiting" error, not success and not terminal,
-					// since bucketID alone isn't provisioning-complete.
-					assert.ErrorContains(t, err, "waiting for Bucket to be provisioned")
-					assert.NotErrorIs(t, err, reconcile.TerminalError(nil))
+					// Expect: success with no requeue. The claim mirrors the Bucket's (not ready)
+					// status, and the Bucket watch re-enqueues the claim when readyToUse changes.
+					assert.NoError(t, err)
 					assert.Empty(t, res)
 
-					// Validate: the claim was left untouched (spec, binding, readiness, and
-					// protocols all unchanged), and the controller did not write to the Bucket
-					// it doesn't own the status of.
+					// Validate: the claim is still bound and not ready, with no protocols, and
+					// the controller did not write to the Bucket it doesn't own the status of.
 					claim, bucket := getClaimAndBucket(bootstrapped)
 
 					assert.Equal(t, initClaim.Spec, claim.Spec)
@@ -528,8 +526,7 @@ func TestBucketClaimReconcile(t *testing.T) {
 
 				t.Run("still waiting when Bucket has no ID", func(t *testing.T) {
 					// The mirror of the case above: readyToUse is set, but bucketID is absent.
-					// Neither half of the provisioning gate may advance the claim on its own, so
-					// this must also be "still waiting".
+					// bucketID gates provisioning, so the claim must not mirror readyToUse yet.
 
 					// Set up: fully provision the Bucket with the sidecar reconciler, then clear
 					// status.bucketID (this should stall the reconcile).
@@ -554,10 +551,9 @@ func TestBucketClaimReconcile(t *testing.T) {
 					// Act: reconcile the BucketClaim against that Bucket.
 					res, err := r.Reconcile(ctx, ctrl.Request{NamespacedName: cositest.NsName(&baseDynamicClaim)})
 
-					// Expect: the same retryable "still waiting" error, not success and not
-					// terminal, since readyToUse alone isn't provisioning-complete either.
-					assert.ErrorContains(t, err, "waiting for Bucket to be provisioned")
-					assert.NotErrorIs(t, err, reconcile.TerminalError(nil))
+					// Expect: success with no requeue. The reconciler waits for a Bucket status
+					// change (via the Bucket watch) rather than retrying with backoff.
+					assert.NoError(t, err)
 					assert.Empty(t, res)
 
 					// Validate: the claim was left untouched, and the controller did not write to
