@@ -188,9 +188,9 @@ func handoffOccurred(logger logr.Logger, old, new *cosiapi.BucketAccess) bool {
 	return false
 }
 
-// BucketReadinessChanged implements a predicate that enqueues a reconcile for Bucket Update events
-// where the readiness status of a Bucket changes.
-func BucketReadinessChanged(s *runtime.Scheme) predicate.Funcs {
+// BucketReadinessStatusChanged returns a predicate that enqueues a reconcile for Bucket Update events
+// if the readiness status of a Bucket changes.
+func BucketReadinessStatusChanged(s *runtime.Scheme) predicate.Funcs {
 	funcs := allFalseFuncs()
 	funcs.UpdateFunc = func(e event.UpdateEvent) bool {
 		logger := ctrl.Log.WithName("predicate")

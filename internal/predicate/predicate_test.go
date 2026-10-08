@@ -121,61 +121,50 @@ func Test_handoffOccurred(t *testing.T) {
 
 }
 
-func TestBucketReadinessChanged(t *testing.T) {
+// getBucket returns a Bucket with the given status fields set
+func getBucket(ready *bool, bucketID string, protocols ...cosiapi.ObjectProtocol) *cosiapi.Bucket {
+	return &cosiapi.Bucket{
+		Status: cosiapi.BucketStatus{
+			ReadyToUse: ready,
+			BucketID:   bucketID,
+			Protocols:  protocols,
+		},
+	}
+}
+
+func TestBucketReadinessStatusChanged(t *testing.T) {
 	scheme := runtime.NewScheme()
-	require.NoError(t, cosiapi.AddToScheme(scheme))
+	err := cosiapi.AddToScheme(scheme)
+	require.NoError(t, err)
 
-	bucketWithReady := func(ready *bool) *cosiapi.Bucket {
-		return &cosiapi.Bucket{Status: cosiapi.BucketStatus{ReadyToUse: ready}}
-	}
+	predicate := BucketReadinessStatusChanged(scheme)
 
-	predicate := BucketReadinessChanged(scheme)
+	nilReadyBucket := getBucket(nil, "")
+	notReadyBucket := getBucket(ptr.To(false), "")
+	readyBucket := getBucket(ptr.To(true), "")
 
-	tests := []struct {
-		name     string
-		old, new *bool
-		want     bool
-	}{
-		{"nil to nil", nil, nil, false},
-		{"nil to false", nil, ptr.To(false), true},
-		{"nil to true", nil, ptr.To(true), true},
-		{"false to nil", ptr.To(false), nil, true},
-		{"false to false", ptr.To(false), ptr.To(false), false},
-		{"false to true", ptr.To(false), ptr.To(true), true},
-		{"true to nil", ptr.To(true), nil, true},
-		{"true to false", ptr.To(true), ptr.To(false), true},
-		{"true to true", ptr.To(true), ptr.To(true), false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			e := event.UpdateEvent{ObjectOld: bucketWithReady(tt.old), ObjectNew: bucketWithReady(tt.new)}
-			assert.Equal(t, tt.want, predicate.Update(e))
-		})
-	}
+	// all permutations of readiness
+	assert.False(t, predicate.Update(event.UpdateEvent{ObjectOld: nilReadyBucket, ObjectNew: nilReadyBucket.DeepCopy()}))
+	assert.True(t, predicate.Update(event.UpdateEvent{ObjectOld: nilReadyBucket, ObjectNew: notReadyBucket}))
+	assert.True(t, predicate.Update(event.UpdateEvent{ObjectOld: nilReadyBucket, ObjectNew: readyBucket}))
+	assert.True(t, predicate.Update(event.UpdateEvent{ObjectOld: notReadyBucket, ObjectNew: nilReadyBucket}))
+	assert.False(t, predicate.Update(event.UpdateEvent{ObjectOld: notReadyBucket, ObjectNew: notReadyBucket.DeepCopy()}))
+	assert.True(t, predicate.Update(event.UpdateEvent{ObjectOld: notReadyBucket, ObjectNew: readyBucket}))
+	assert.True(t, predicate.Update(event.UpdateEvent{ObjectOld: readyBucket, ObjectNew: nilReadyBucket}))
+	assert.True(t, predicate.Update(event.UpdateEvent{ObjectOld: readyBucket, ObjectNew: notReadyBucket}))
+	assert.False(t, predicate.Update(event.UpdateEvent{ObjectOld: readyBucket, ObjectNew: readyBucket.DeepCopy()}))
 
-	t.Run("other status fields changing alone is ignored", func(t *testing.T) {
-		old := bucketWithReady(ptr.To(true))
-		new := old.DeepCopy()
-		new.Status.BucketID = "some-bucket-id"
-		new.Status.Protocols = []cosiapi.ObjectProtocol{cosiapi.ObjectProtocolS3}
-		new.Status.BucketInfo = map[string]string{"endpoint": "https://s3.example.com"}
+	// other status fields changing alone is ignored
+	bucketWithDetails := getBucket(ptr.To(true), "some-bucket-id", cosiapi.ObjectProtocolS3)
+	assert.False(t, predicate.Update(event.UpdateEvent{ObjectOld: readyBucket, ObjectNew: bucketWithDetails}))
 
-		assert.False(t, predicate.Update(event.UpdateEvent{ObjectOld: old, ObjectNew: new}))
-	})
+	// non-Bucket objects are ignored
+	claim := &cosiapi.BucketClaim{}
+	assert.False(t, predicate.Update(event.UpdateEvent{ObjectOld: claim, ObjectNew: readyBucket}))
+	assert.False(t, predicate.Update(event.UpdateEvent{ObjectOld: readyBucket, ObjectNew: claim}))
 
-	t.Run("non-Bucket objects are ignored", func(t *testing.T) {
-		claim := &cosiapi.BucketClaim{}
-		bucket := bucketWithReady(ptr.To(true))
-
-		assert.False(t, predicate.Update(event.UpdateEvent{ObjectOld: claim, ObjectNew: bucket}))
-		assert.False(t, predicate.Update(event.UpdateEvent{ObjectOld: bucket, ObjectNew: claim}))
-	})
-
-	t.Run("non-Update events are ignored", func(t *testing.T) {
-		bucket := bucketWithReady(ptr.To(true))
-
-		assert.False(t, predicate.Create(event.CreateEvent{Object: bucket}))
-		assert.False(t, predicate.Delete(event.DeleteEvent{Object: bucket}))
-		assert.False(t, predicate.Generic(event.GenericEvent{Object: bucket}))
-	})
+	// non-Update events are ignored
+	assert.False(t, predicate.Create(event.CreateEvent{Object: readyBucket}))
+	assert.False(t, predicate.Delete(event.DeleteEvent{Object: readyBucket}))
+	assert.False(t, predicate.Generic(event.GenericEvent{Object: readyBucket}))
 }
