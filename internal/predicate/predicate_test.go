@@ -121,92 +121,61 @@ func Test_handoffOccurred(t *testing.T) {
 
 }
 
-func Test_bucketStatusChanged(t *testing.T) {
-	t.Run("no status change", func(t *testing.T) {
-		old := &cosiapi.Bucket{}
-		new := &cosiapi.Bucket{}
+func TestBucketReadinessChanged(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, cosiapi.AddToScheme(scheme))
 
-		assert.False(t, bucketStatusChanged(old, new))
-	})
+	bucketWithReady := func(ready *bool) *cosiapi.Bucket {
+		return &cosiapi.Bucket{Status: cosiapi.BucketStatus{ReadyToUse: ready}}
+	}
 
-	t.Run("bucketID set", func(t *testing.T) {
-		old := &cosiapi.Bucket{}
-		new := &cosiapi.Bucket{
-			Status: cosiapi.BucketStatus{
-				BucketID: "some-bucket-id",
-			},
-		}
+	predicate := BucketReadinessChanged(scheme)
 
-		// a change in bucket ID is not a valid predicate for a bucket claim to be reconciled.
-		assert.False(t, bucketStatusChanged(old, new))
-	})
+	tests := []struct {
+		name     string
+		old, new *bool
+		want     bool
+	}{
+		{"nil to nil", nil, nil, false},
+		{"nil to false", nil, ptr.To(false), true},
+		{"nil to true", nil, ptr.To(true), true},
+		{"false to nil", ptr.To(false), nil, true},
+		{"false to false", ptr.To(false), ptr.To(false), false},
+		{"false to true", ptr.To(false), ptr.To(true), true},
+		{"true to nil", ptr.To(true), nil, true},
+		{"true to false", ptr.To(true), ptr.To(false), true},
+		{"true to true", ptr.To(true), ptr.To(true), false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := event.UpdateEvent{ObjectOld: bucketWithReady(tt.old), ObjectNew: bucketWithReady(tt.new)}
+			assert.Equal(t, tt.want, predicate.Update(e))
+		})
+	}
 
-	t.Run("readyToUse becomes true, bucketID unchanged", func(t *testing.T) {
-		old := &cosiapi.Bucket{
-			Status: cosiapi.BucketStatus{
-				BucketID:   "some-bucket-id",
-				ReadyToUse: ptr.To(false),
-			},
-		}
-		new := &cosiapi.Bucket{
-			Status: cosiapi.BucketStatus{
-				BucketID:   "some-bucket-id",
-				ReadyToUse: ptr.To(true),
-			},
-		}
-
-		assert.True(t, bucketStatusChanged(old, new))
-	})
-
-	t.Run("readyToUse set from nil", func(t *testing.T) {
-		old := &cosiapi.Bucket{}
-		new := &cosiapi.Bucket{
-			Status: cosiapi.BucketStatus{
-				ReadyToUse: ptr.To(false),
-			},
-		}
-
-		assert.True(t, bucketStatusChanged(old, new))
-	})
-
-	t.Run("protocols change, bucketID and readyToUse unchanged", func(t *testing.T) {
-		old := &cosiapi.Bucket{
-			Status: cosiapi.BucketStatus{
-				BucketID:   "some-bucket-id",
-				ReadyToUse: ptr.To(true),
-				Protocols:  []cosiapi.ObjectProtocol{cosiapi.ObjectProtocolS3},
-			},
-		}
+	t.Run("other status fields changing alone is ignored", func(t *testing.T) {
+		old := bucketWithReady(ptr.To(true))
 		new := old.DeepCopy()
-		new.Status.Protocols = []cosiapi.ObjectProtocol{cosiapi.ObjectProtocolS3, cosiapi.ObjectProtocolAzure}
-
-		assert.True(t, bucketStatusChanged(old, new))
-	})
-
-	t.Run("fully provisioned, no change", func(t *testing.T) {
-		old := &cosiapi.Bucket{
-			Status: cosiapi.BucketStatus{
-				BucketID:   "some-bucket-id",
-				ReadyToUse: ptr.To(true),
-				Protocols:  []cosiapi.ObjectProtocol{cosiapi.ObjectProtocolS3},
-			},
-		}
-		new := old.DeepCopy()
-
-		assert.False(t, bucketStatusChanged(old, new))
-	})
-
-	t.Run("irrelevant status change is ignored", func(t *testing.T) {
-		old := &cosiapi.Bucket{
-			Status: cosiapi.BucketStatus{
-				BucketID:   "some-bucket-id",
-				ReadyToUse: ptr.To(true),
-				Protocols:  []cosiapi.ObjectProtocol{cosiapi.ObjectProtocolS3},
-			},
-		}
-		new := old.DeepCopy()
+		new.Status.BucketID = "some-bucket-id"
+		new.Status.Protocols = []cosiapi.ObjectProtocol{cosiapi.ObjectProtocolS3}
 		new.Status.BucketInfo = map[string]string{"endpoint": "https://s3.example.com"}
 
-		assert.False(t, bucketStatusChanged(old, new))
+		assert.False(t, predicate.Update(event.UpdateEvent{ObjectOld: old, ObjectNew: new}))
+	})
+
+	t.Run("non-Bucket objects are ignored", func(t *testing.T) {
+		claim := &cosiapi.BucketClaim{}
+		bucket := bucketWithReady(ptr.To(true))
+
+		assert.False(t, predicate.Update(event.UpdateEvent{ObjectOld: claim, ObjectNew: bucket}))
+		assert.False(t, predicate.Update(event.UpdateEvent{ObjectOld: bucket, ObjectNew: claim}))
+	})
+
+	t.Run("non-Update events are ignored", func(t *testing.T) {
+		bucket := bucketWithReady(ptr.To(true))
+
+		assert.False(t, predicate.Create(event.CreateEvent{Object: bucket}))
+		assert.False(t, predicate.Delete(event.DeleteEvent{Object: bucket}))
+		assert.False(t, predicate.Generic(event.GenericEvent{Object: bucket}))
 	})
 }

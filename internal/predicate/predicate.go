@@ -22,7 +22,6 @@ package predicate
 
 import (
 	"fmt"
-	"slices"
 
 	"github.com/go-logr/logr"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -169,41 +168,6 @@ func BucketAccessHandoffOccurred(s *runtime.Scheme) predicate.Funcs {
 	return funcs
 }
 
-// BucketStatusChanged implements a predicate that enqueues a reconcile for Bucket Update events
-// where a status field that the BucketClaim mirrors (bucketID, readyToUse, or protocols) changes.
-// These fields are not necessarily written together: a sidecar may persist bucketID before the
-// backend bucket is provisioned and only later set readyToUse (e.g. in 2 Phase Bucket Provisioning).
-//
-// The predicate does not enqueue requests for any Create/Delete/Generic events.
-// This ensures that other predicates can effectively filter out undesired non-Update events.
-func BucketStatusChanged(s *runtime.Scheme) predicate.Funcs {
-	funcs := allFalseFuncs()
-	funcs.UpdateFunc = func(e event.UpdateEvent) bool {
-		old := e.ObjectOld
-		new := e.ObjectNew
-
-		logger := ctrl.Log.WithName("predicate")
-
-		oldBucket, ok := toTypedOrLogError[*cosiapi.Bucket](logger.WithValues("oldOrNew", "old"), s, old)
-		if !ok {
-			return false // not a Bucket, so don't manage it
-		}
-		newBucket, ok := toTypedOrLogError[*cosiapi.Bucket](logger.WithValues("oldOrNew", "new"), s, new)
-		if !ok {
-			return false // not a Bucket, so don't manage it
-		}
-
-		return bucketStatusChanged(oldBucket, newBucket)
-	}
-	return funcs
-}
-
-// Internal logic for determining if a Bucket status change is relevant to the BucketClaim.
-func bucketStatusChanged(old, new *cosiapi.Bucket) bool {
-	return !ptr.Equal(old.Status.ReadyToUse, new.Status.ReadyToUse) ||
-		!slices.Equal(old.Status.Protocols, new.Status.Protocols)
-}
-
 // Internal logic for determining if BucketAccess Controller-Sidecar handoff has occurred.
 func handoffOccurred(logger logr.Logger, old, new *cosiapi.BucketAccess) bool {
 	oldIsSidecar := bucketaccess.ManagedBySidecar(old)
@@ -222,6 +186,27 @@ func handoffOccurred(logger logr.Logger, old, new *cosiapi.BucketAccess) bool {
 		return true
 	}
 	return false
+}
+
+// BucketReadinessChanged implements a predicate that enqueues a reconcile for Bucket Update events
+// where the readiness status of a Bucket changes.
+func BucketReadinessChanged(s *runtime.Scheme) predicate.Funcs {
+	funcs := allFalseFuncs()
+	funcs.UpdateFunc = func(e event.UpdateEvent) bool {
+		logger := ctrl.Log.WithName("predicate")
+
+		oldBucket, ok := toTypedOrLogError[*cosiapi.Bucket](logger.WithValues("oldOrNew", "old"), s, e.ObjectOld)
+		if !ok {
+			return false // not a Bucket, so don't manage it
+		}
+		newBucket, ok := toTypedOrLogError[*cosiapi.Bucket](logger.WithValues("oldOrNew", "new"), s, e.ObjectNew)
+		if !ok {
+			return false // not a Bucket, so don't manage it
+		}
+
+		return !ptr.Equal(oldBucket.Status.ReadyToUse, newBucket.Status.ReadyToUse)
+	}
+	return funcs
 }
 
 // BucketAccessManagedBySidecar implements a predicate that enqueues a BucketAccess reconcile for
