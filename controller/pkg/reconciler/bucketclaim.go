@@ -124,6 +124,9 @@ func (r *BucketClaimReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		func(o client.Object) []string {
 			claim, ok := o.(*cosiapi.BucketClaim)
 			if !ok || claim.Spec.BucketClassName == "" {
+				// Don't index BucketClaims without a BucketClass.
+				// For static claims, BucketClass events do not apply.
+				// For dynamic claims, an empty BucketClass is invalid.
 				return nil
 			}
 			return []string{claim.Spec.BucketClassName}
