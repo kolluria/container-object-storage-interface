@@ -679,7 +679,7 @@ func TestBucketClaimReconcile(t *testing.T) {
 			res, err := r.Reconcile(ctx, ctrl.Request{NamespacedName: cositest.NsName(&baseDynamicClaim)})
 			assert.Error(t, err)
 			assert.ErrorIs(t, err, reconcile.TerminalError(nil)) // no backoff; BucketClass watch re-enqueues the claim
-			assert.ErrorContains(t, err, "not found")
+			assert.ErrorContains(t, err, `BucketClass "s3-class" not found`)
 			assert.Empty(t, res)
 
 			claim, _, _ := getAllClaimResources(bootstrapped)

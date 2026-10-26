@@ -191,21 +191,24 @@ func mapBucketToBucketClaim(ctx context.Context, obj client.Object) []reconcile.
 	}
 }
 
-// mapBucketClassToWaitingBucketClaims is a handler.MapFunc that, given a BucketClass Create event,
-// returns a reconcile.Request for each BucketClaim that is waiting on that BucketClass. Claims that
-// reference the class but are static, already bound, or being deleted are not waiting and are skipped.
+// mapBucketClassToWaitingBucketClaims is a handler.MapFunc that, given a BucketClass event,
+// returns a reconcile.Request for each BucketClaim that is waiting on that BucketClass.
 func (r *BucketClaimReconciler) mapBucketClassToWaitingBucketClaims(
 	ctx context.Context, obj client.Object,
 ) []reconcile.Request {
+	logger := ctrl.LoggerFrom(ctx)
+
 	bucketClass, ok := obj.(*cosiapi.BucketClass)
 	if !ok {
-		ctrl.LoggerFrom(ctx).Error(nil, "received non-BucketClass object", "obj", obj)
+		logger.Error(nil, "received non-BucketClass object", "obj", obj)
 		return nil
 	}
 
+	logger = logger.WithValues("bucketClassName", bucketClass.Name)
+
 	claims := &cosiapi.BucketClaimList{}
 	if err := r.List(ctx, claims, client.MatchingFields{bucketClassNameIndexerField: bucketClass.Name}); err != nil {
-		ctrl.LoggerFrom(ctx).Error(err, "failed to list BucketClaims for BucketClass", "bucketClassName", bucketClass.Name)
+		logger.Error(err, "failed to list BucketClaims for BucketClass")
 		return nil
 	}
 
@@ -216,8 +219,11 @@ func (r *BucketClaimReconciler) mapBucketClassToWaitingBucketClaims(
 			claim.Status.BoundBucketName == "" && // bound claims already created their Bucket
 			claim.DeletionTimestamp.IsZero() // deleting claims won't use the class
 		if !waiting {
+			logger.V(2).Info("BucketClaim is not waiting on BucketClass", "claim", client.ObjectKeyFromObject(claim))
 			continue
 		}
+
+		logger.V(2).Info("BucketClaim is waiting on BucketClass", "claim", client.ObjectKeyFromObject(claim))
 		requests = append(requests, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(claim)})
 	}
 	return requests
@@ -515,7 +521,7 @@ func createIntermediateBucket(
 		if kerrors.IsNotFound(err) {
 			// Stop reconciliation and wait for the BucketClass to be created.
 			// See SetupWithManager for how the watcher is set up.
-			logger.Info("BucketClass not found")
+			logger.Error(err, "BucketClass not found")
 			return nil, cosierr.NonRetryableError(fmt.Errorf("BucketClass %q not found", className))
 		}
 		logger.Error(err, "failed to get BucketClass")
